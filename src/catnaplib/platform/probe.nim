@@ -21,8 +21,14 @@ proc getDistro*(): string =
     if result != "": return
 
     when defined(linux) or defined(bsd):
-    # Returns the name of the running linux distro
-        result = "/etc/os-release".loadConfig.getSectionValue("", "PRETTY_NAME") & " " & uname().machine
+        # Returns the name of the running linux distro
+        var osReleasePath = "/etc/os-release"
+        if not fileExists(osReleasePath):
+            osReleasePath = getEnv("PREFIX") & "/etc/os-release"
+        if not fileExists(osReleasePath):
+            result = "Termux (Android)"
+        else:
+            result = osReleasePath.loadConfig.getSectionValue("", "PRETTY_NAME") & " " & uname().machine
     elif defined(macosx):
         result = "MacOS X" & " " & uname().machine
     else:
@@ -44,8 +50,15 @@ proc getDistroId*(): DistroId =
             result.id = "raspbian"
             result.like = "debian"
         else:
-            result.id = "/etc/os-release".loadConfig.getSectionValue("", "ID").toLower()
-            result.like = "/etc/os-release".loadConfig.getSectionValue("", "ID_LIKE").toLower()
+            var osReleasePath = "/etc/os-release"
+            if not fileExists(osReleasePath):
+                osReleasePath = getEnv("PREFIX") & "/etc/os-release"
+            if not fileExists(osReleasePath):
+                result.id = "termux"
+                result.like = "android"
+            else:
+                result.id = osReleasePath.loadConfig.getSectionValue("", "ID").toLower()
+                result.like = osReleasePath.loadConfig.getSectionValue("", "ID_LIKE").toLower()
     elif defined(macosx):
         result.id = "macos"
         result.like = "macos"
@@ -57,28 +70,52 @@ proc getDistroId*(): DistroId =
 proc getUptime*(): string =
     # Returns the system uptime as a string (DAYS, HOURS, MINUTES)
 
-    # Uptime in sec
     var utu: int
     if defined(linux) or defined(bsd):
-        let uptime = "/proc/uptime".open.readLine.split(".")[0]
-        utu = uptime.parseInt
+        try:
+            if fileExists("/proc/uptime"):
+                let uptime = "/proc/uptime".open.readLine.split(".")[0]
+                utu = uptime.parseInt
+            elif fileExists(getEnv("PREFIX") & "/proc/uptime"):
+                let uptime = (getEnv("PREFIX") & "/proc/uptime").open.readLine.split(".")[0]
+                utu = uptime.parseInt
+            else:
+                # Fallback for Termux (Android)
+                let uptimeStr = execProcess("uptime -p")
+                if uptimeStr.len > 0:
+                    var cleaned = uptimeStr.strip().replace("up ", "")
+                    # Trim after "hours"
+                    if "hour" in cleaned:
+                        let parts = cleaned.split("hour")
+                        cleaned = parts[0] & "hours"
+                    elif "day" in cleaned:
+                        let parts = cleaned.split("day")
+                        cleaned = parts[0] & "days"
+                    return cleaned
+                else:
+                    return "Unknown"       
+        except:
+            return "Unknown"
     else:
-      let
-          boottime = execProcess("sysctl -n kern.boottime").split(" ")[3].split(",")[0]
-          now = epochTime()
-      utu = toInt(now) - parseInt(boottime)
+        try:
+            let
+                boottime = execProcess("sysctl -n kern.boottime").split(" ")[3].split(",")[0]
+                now = epochTime()
+            utu = toInt(now) - parseInt(boottime)
+        except:
+            return "Unknown"
 
     let
         uth = utu div 3600 mod 24 # hours
         utm = utu mod 3600 div 60 # minutes
         utd = utu div 3600 div 24 # days
 
-    if utd == 0 and uth != 0:
-        result = &"{uth}h {utm}m" # return hours and mins
-    elif uth == 0 and utd == 0:
-        result = &"{utm}m" # return only mins
+    if utd > 0:
+        result = &"{utd}d {uth}h"
+    elif uth > 0:
+        result = &"{uth}h {utm}m"
     else:
-        result = &"{utd}d {uth}h {utm}m" # return days, hours and mins
+        result = &"{utm}m"
 
 proc getHostname*(): string =
     # Returns the system hostname
@@ -95,41 +132,65 @@ proc getKernel*(): string =
 proc getParentPid(pid: int): int =
     if defined(linux) or defined(bsd):
         let statusFilePath = "/proc/" & $pid & "/status"
-        let statusLines = readFile(statusFilePath).split("\n")
-        for rawline in statusLines:
-            let stat = rawline.split(":")
-            if stat[0] == "PPid": # Filter CurrentProcessInfo for Parent pid
-                let pPid = parseInt(stat[1].strip())
-                return pPid
+        try:
+            if fileExists(statusFilePath):
+                let statusLines = readFile(statusFilePath).split("\n")
+                for rawline in statusLines:
+                    let stat = rawline.split(":")
+                    if stat.len >= 2 and stat[0] == "PPid":
+                        return parseInt(stat[1].strip())
+            else:
+                # fallback using ps command (works in Termux)
+                let pPidStr = execProcess(&"ps -o ppid= -p {pid}").strip()
+                if pPidStr.len > 0:
+                    return parseInt(pPidStr)
+        except:
+            discard
     elif defined(macosx):
-        let pPid = execProcess("ps -o ppid -p " & $pid).split("\n")[1]
-        return parseInt(pPid)
-    else:
-        return -1
+        try:
+            let pPid = execProcess("ps -o ppid= -p " & $pid).strip()
+            return parseInt(pPid)
+        except:
+            discard
+    return -1
 
 proc getProcessName(pid: int): string =
     if defined(linux) or defined(bsd):
-        let statusLines = readFile("/proc/" & $pid & "/status").split("\n")
-        for rawLine in statusLines:
-            let stat = rawLine.split(":")
-            if stat[0] == "Name": # Filter ParentProcessInfo for Parent Name
-                return stat[1].strip()
+        let statusFilePath = "/proc/" & $pid & "/status"
+        try:
+            if fileExists(statusFilePath):
+                let statusLines = readFile(statusFilePath).split("\n")
+                for rawLine in statusLines:
+                    let stat = rawLine.split(":")
+                    if stat.len >= 2 and stat[0] == "Name":
+                        return stat[1].strip()
+            else:
+                # fallback using ps (works on Android)
+                let cmd = execProcess(&"ps -p {pid} -o comm=").strip()
+                if cmd.len > 0:
+                    return cmd.split("/")[^1]
+        except:
+            discard
     elif defined(macosx):
-        let cmd = execProcess("ps -o comm -p " & $pid).split("\n")[1]
-        return cmd.split("/")[^1] # Strip away command path
-    else:
-        return "Unknown"
+        try:
+            let cmd = execProcess("ps -o comm= -p " & $pid).strip()
+            if cmd.len > 0:
+                return cmd.split("/")[^1]
+        except:
+            discard
+    return "Unknown"
 
-proc getTerminal*(): string =
-    # Returns the currently running terminal emulator
-    if defined(linux) or defined(bsd):
-        result = getCurrentProcessID().getParentPid().getParentPid().getProcessName()
-        if result == "login" or result == "sshd":
-            result = "tty"
-    elif defined(macosx):
-        result = getEnv("TERM_PROGRAM")
-    else:
-        result = "Unknown"
+
+proc getTerminal*(): string =  
+    # Returns the currently running terminal emulator  
+    if defined(linux) or defined(bsd):  
+        result = getCurrentProcessID().getParentPid().getParentPid().getProcessName()  
+        if result == "login" or result == "sshd":  
+            result = "tty"  
+    elif defined(macosx):  
+        result = getEnv("TERM_PROGRAM")  
+    else:  
+        result = "Unknown"  
 
 proc getShell*(): string =
     # Returns the system shell
