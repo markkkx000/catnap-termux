@@ -144,23 +144,29 @@ const
 let CONFIGPATH*   = joinPath(getConfigDir(), "catnap/config.toml")
 let DISTROSPATH*  = joinPath(getConfigDir(), "catnap/distros.toml")
 
-
 proc getCachePath*(): string =
-    result = getEnv("XDG_CACHE_HOME")
+  result = getEnv("XDG_CACHE_HOME")
+  if result != "":
+    result = joinPath(result, "catnap")
+  else:
+    result = getEnv("HOME")
     if result != "":
-        result = joinPath(result, "catnap")
+      result = joinPath(result, ".cache/catnap")
     else:
-        result = getEnv("HOME")
-        if result != "":
-            result = joinPath(result, ".cache/catnap")
-        else:
-            result = "/tmp/catnap"
+      let prefix = getEnv("PREFIX", "/data/data/com.termux/files/usr")
+      result = joinPath(prefix, "tmp/catnap")
 
-let CACHEPATH* = getCachePath() 
-let TEMPPATH* = "/tmp/catnap"       
+  createDir(result)  # ensure it exists
+
+let CACHEPATH* = getCachePath()
+let TEMPPATH* =
+  block:
+    let tmpBase = getEnv("TMPDIR", getEnv("PREFIX", "/data/data/com.termux/files/usr") & "/tmp")
+    let path = joinPath(tmpBase, "catnap")
+    createDir(path)
+    path
 
 proc toCachePath*(p: string): string =
-    # Converts a path [p] into a cahce path 
     return joinPath(CACHEPATH, p)
 
 proc toTmpPath*(p: string): string =
