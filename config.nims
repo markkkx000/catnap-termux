@@ -74,44 +74,43 @@ task install_cfg, "Installs the config files":
     configure()
 
 task install_bin, "Installs the bin file and man page:":
-    echo "\e[36;1mInstalling\e[0;0m bin file"
-    echo &"Copying {thisDir()}/bin/catnap to /usr/local/bin"
-    if defined(linux):
-      exec &"sudo install -Dm755 {thisDir()}/bin/catnap /usr/local/bin/catnap"
-    else:
-      exec &"sudo mkdir -p /usr/local/bin && sudo install -m755 {thisDir()}/bin/catnap /usr/local/bin/catnap"
+  let prefix = getEnv("PREFIX", "/data/data/com.termux/files/usr")
+  let binDir = prefix / "bin"
+  let manDir1 = prefix / "share/man/man1"
+  let manDir5 = prefix / "share/man/man5"
 
-    let
-        man_1_path = "/usr/share/man/man1/catnap.1.gz"
-        local_1_path = &"{thisDir()}/docs/catnap.1"
+  echo "\e[36;1mInstalling\e[0;0m bin file"
+  echo &"Copying {thisDir()}/bin/catnap to {binDir}"
+  exec &"install -Dm755 {thisDir()}/bin/catnap {binDir}/catnap"
 
-        man_5_path = "/usr/share/man/man5/catnap.5.gz"
-        local_5_path = &"{thisDir()}/docs/catnap.5"
+  let
+    man_1_path = manDir1 / "catnap.1.gz"
+    local_1_path = &"{thisDir()}/docs/catnap.1"
+    man_5_path = manDir5 / "catnap.5.gz"
+    local_5_path = &"{thisDir()}/docs/catnap.5"
 
-    # Install man page only if it 
-    echo &"\e[36;1mInstalling\e[0;0m man page"
-    # Create .gz file
-    exec &"gzip -kf {local_1_path}"
-    exec &"gzip -kf {local_5_path}"
+  echo &"\e[36;1mInstalling\e[0;0m man page"
 
-    # If man page dose not exist or there is a new version, install the new man page
-    if not fileExists(man_1_path) or readFile(local_1_path & ".gz") != readFile(man_1_path):
-        echo &"Copying {local_1_path} to /usr/share/man/man1"
-        if defined(linux):
-          exec &"sudo install -Dm755 {local_1_path}.gz /usr/share/man/man1/catnap.1.gz"
-        else:
-          exec &"sudo mkdir -p /usr/local/share/man/man1 && sudo install -m755 {local_1_path}.gz /usr/local/share/man/man1/catnap.1.gz"
-    else:
-        echo &"Copying {local_1_path} to /usr/share/man/man1 - SKIPPED"
+  # Compress the man pages
+  exec &"gzip -kf {local_1_path}"
+  exec &"gzip -kf {local_5_path}"
 
-    if not fileExists(man_5_path) or readFile(local_5_path & ".gz") != readFile(man_5_path):
-        echo &"Copying {local_5_path} to /usr/share/man/man5"
-        if defined(linux):
-          exec &"sudo install -Dm755 {local_5_path}.gz /usr/share/man/man5/catnap.5.gz"
-        else:
-          exec &"sudo mkdir -p /usr/local/share/man/man5 && sudo install -m755 {local_5_path}.gz /usr/local/share/man/man5/catnap.5.gz"
-    else:
-        echo &"Copying {local_5_path} to /usr/share/man/man5 - SKIPPED"
+  # Create directories if missing
+  exec &"mkdir -p {manDir1}"
+  exec &"mkdir -p {manDir5}"
+
+  # Install or update the man pages
+  if not fileExists(man_1_path) or readFile(local_1_path & ".gz") != readFile(man_1_path):
+    echo &"Copying {local_1_path} to {manDir1}"
+    exec &"install -Dm644 {local_1_path}.gz {man_1_path}"
+  else:
+    echo &"Copying {local_1_path} to {manDir1} - SKIPPED"
+
+  if not fileExists(man_5_path) or readFile(local_5_path & ".gz") != readFile(man_5_path):
+    echo &"Copying {local_5_path} to {manDir5}"
+    exec &"install -Dm644 {local_5_path}.gz {man_5_path}"
+  else:
+    echo &"Copying {local_5_path} to {manDir5} - SKIPPED"
 
 task uninstall, "Uninstalls the bin file and man page:":
     echo "\e[36;1mUninstalling\e[0;0m bin file"
